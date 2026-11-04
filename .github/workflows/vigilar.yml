@@ -1,0 +1,42 @@
+name: Vigilar cargadores
+
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "vigilar o estado"
+        type: choice
+        options: [vigilar, estado]
+        default: vigilar
+      horas:
+        description: "Horas máximas vigilando (máx. 5.5)"
+        type: string
+        default: "3"
+
+concurrency:
+  group: ${{ inputs.modo }}
+  cancel-in-progress: true
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Vigilar
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODO: ${{ inputs.modo }}
+          HORAS: ${{ inputs.horas }}
+          CUPR_IDS: ${{ vars.CUPR_IDS }}
+          ZONA: ${{ vars.ZONA }}
+          INTERVALO: ${{ vars.INTERVALO }}
+          SOLO_GRATIS: ${{ vars.SOLO_GRATIS }}
+          EXCLUIR_TIPOS: ${{ vars.EXCLUIR_TIPOS }}
+        run: python vigilar.py
