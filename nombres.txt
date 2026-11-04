@@ -1,0 +1,14 @@
+# Nombres que quieres ver en los avisos.
+# Formato: id = nombre   (el id sale entre paréntesis en /estado)
+# Cambia el texto de la derecha como quieras. Las líneas con # se ignoran.
+# Para que el bot no tenga en cuenta un cargador, pon "ignorar" como nombre.
+
+11462 = Hispanidad
+11881 = Pont de Sant Jordi
+12398 = ignorar
+12399 = Plaza de los churros
+12658 = ignorar
+11879 = Batoi
+11880 = Glorieta
+11900 = Santa Rosa
+99577 = Collao
