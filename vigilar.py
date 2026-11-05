@@ -28,6 +28,7 @@ import os
 import random
 import sys
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 
@@ -270,6 +271,65 @@ def obtener_ids(api: Iberdrola) -> list[int]:
     return sorted({(p.get("locationData") or {}).get("cuprId") for p in puntos} - {None})
 
 
+def normalizar(texto: str) -> str:
+    """Minúsculas y sin tildes, para comparar nombres."""
+    texto = unicodedata.normalize("NFKD", texto.lower())
+    return "".join(c for c in texto if not unicodedata.combining(c)).strip()
+
+
+def aplicar_filtro(puntos: list[dict], filtro: str) -> tuple[list[dict], list[str]]:
+    """Se queda con los cargadores pedidos en Telegram (p. ej. "batoi, collao").
+
+    Cada palabra (o trozo separado por comas) se busca dentro del nombre,
+    sin importar mayúsculas ni tildes; también vale el id.
+    Devuelve (cargadores elegidos, trozos que no coinciden con ninguno).
+    """
+    validos = [p for p in puntos if tomas(p)]
+    filtro = filtro.strip()
+    if not filtro:
+        return validos, []
+
+    relleno = {"de", "del", "la", "las", "los", "el", "y", "e", "i", "en", "d", "l"}
+
+    def palabras(texto: str) -> list[str]:
+        limpio = "".join(c if c.isalnum() else " " for c in normalizar(texto))
+        return [w for w in limpio.split() if w not in relleno]
+
+    def coincide(ps: list[str]) -> list[dict]:
+        """Cargadores cuyo nombre contiene todas las palabras (vale el principio)."""
+        hallados = []
+        for p in validos:
+            cid = str((p.get("locationData") or {}).get("cuprId"))
+            del_nombre = palabras(nombre(p))
+            if ps == [cid] or (ps and all(any(n.startswith(w) for n in del_nombre) for w in ps)):
+                hallados.append(p)
+        return hallados
+
+    # Trozos: separados por comas, o agrupando palabras seguidas que
+    # formen un mismo nombre ("pont sant jordi batoi" -> 2 cargadores).
+    grupos: list[list[str]] = []
+    if "," in filtro:
+        grupos = [palabras(t) for t in filtro.split(",") if palabras(t)]
+    else:
+        ws, i = palabras(filtro), 0
+        while i < len(ws):
+            for j in range(len(ws), i, -1):
+                if coincide(ws[i:j]) or j == i + 1:
+                    grupos.append(ws[i:j])
+                    i = j
+                    break
+    elegidos, sin_coincidencia = [], []
+    for grupo in grupos:
+        trozo = " ".join(grupo)
+        hallados = coincide(grupo)
+        if not hallados:
+            sin_coincidencia.append(trozo.strip())
+        for p in hallados:
+            if p not in elegidos:
+                elegidos.append(p)
+    return elegidos, sin_coincidencia
+
+
 def consultar(api: Iberdrola, ids: list[int]) -> list[dict]:
     """Consulta con un reintento (recalentando cookies) si hay bloqueo."""
     try:
@@ -297,16 +357,28 @@ def main() -> int:
                  "Puede que hayan cambiado su web. Prueba más tarde con /estado.")
         return 1
 
+    todos = puntos
+    puntos, sin_coincidencia = aplicar_filtro(todos, os.environ.get("FILTRO", ""))
+    nota = ""
+    if sin_coincidencia:
+        nota = f"⚠️ No encuentro: {', '.join(sin_coincidencia)}\n\n"
+    if not puntos:
+        disponibles = ", ".join(nombre(p) for p in aplicar_filtro(todos, "")[0])
+        telegram(f"{nota}Ninguno de los nombres coincide con tus cargadores.\n"
+                 f"Tus cargadores son: {disponibles}")
+        return 1
+    ids = [(p.get("locationData") or {}).get("cuprId") for p in puntos]
+
     if modo == "estado":
-        telegram(f"📊 <b>Estado ahora</b>\n\n{resumen(puntos)}")
+        telegram(f"{nota}📊 <b>Estado ahora</b>\n\n{resumen(puntos)}")
         return 0
 
     ya_libres = libres(puntos)
     if ya_libres:
-        telegram(aviso_libre(ya_libres))
+        telegram(nota + aviso_libre(ya_libres))
         return 0
 
-    telegram(f"👀 Vigilando {sum(1 for p in puntos if tomas(p))} cargador(es) durante {horas:g} h "
+    telegram(f"{nota}👀 Vigilando {sum(1 for p in puntos if tomas(p))} cargador(es) durante {horas:g} h "
              f"(cada {intervalo} s). Te aviso en cuanto quede uno libre.\n\n"
              f"{resumen(puntos)}\n\nEscribe /parar para cancelar.")
 
@@ -316,7 +388,8 @@ def main() -> int:
     while time.time() < fin:
         time.sleep(intervalo + random.uniform(-8, 8))
         try:
-            puntos = consultar(api, ids)
+            puntos = [p for p in consultar(api, ids)
+                      if (p.get("locationData") or {}).get("cuprId") in ids]
             fallos = 0
             if avisado_fallos:
                 telegram("✅ Vuelvo a poder consultar a Iberdrola. Sigo vigilando.")
